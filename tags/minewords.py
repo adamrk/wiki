@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#!/usr/bin/python
 
 import wikipedia
 import bs4
@@ -144,8 +144,7 @@ def aggregate_words(titles, number_threads):
 
     for i in range(number_threads):
         threads[i].join()
-    for x in titles:
-        #print x
+    while queue_out.qsize() > 0:
         #pdb.set_trace()
         words, rev_id = queue_out.get()
         all_words += words
@@ -158,11 +157,11 @@ def gen_word_file( num_titles, file_name, number_threads ):
     start_time = time.time()
     titles = wikipedia.random(num_titles)
     words, ids = aggregate_words(titles, number_threads)
-    wordfile = open(file_name, 'w')
+    wordfile = open('words/' + file_name, 'w')
     for (word, cite, noncite) in words:
         wordfile.write("%s %s %s\n" % (word, str(cite), str(noncite)))
     wordfile.close()
-    idfile = open(file_name + 'pid', 'w')
+    idfile = open('words/' + file_name + 'pid', 'w')
     for rev_id in ids:
         idfile.write("%s\n" % str(rev_id))
     idfile.close()
