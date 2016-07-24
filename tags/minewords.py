@@ -17,13 +17,18 @@ sentence_detector = nltk.data.load('tokenizers/punkt/english.pickle')
 
 def get_content(title):
     #print title
-    pg = wikipedia.page(title)
+    try:
+        pg = wikipedia.page(title)
+    except wikipedia.DisambiguationError as e:
+        newtitle = random.sample(e.options, 1)
+        pg = wikipedia.page(newtitle)
     pgsoup = bs4.BeautifulSoup(pg.html(), 'html.parser')
     start = pgsoup.get_text().find('[edit]')
     end = pgsoup.get_text().find('References[edit]')
     return pgsoup.get_text()[start:end], pg.revision_id
 
 def tokenize_text(text):
+    """ Splits text into a list of sentences. """
     return sentence_detector.tokenize(text.strip())
 
 def label_citations(sentences):
@@ -80,7 +85,7 @@ def get_words(sentence):
 
 def cat_words_sentence(sentence, label):
     """ Returns list of tuples (word, citation, noncitation) """
-    return [(word, label, 1 - label) for word in get_words(sentence)]
+    return [(word, label, 1 - label) for word in set(get_words(sentence))]
 
 def cat_words_text(text):
     """ Returns list of tuples (word, citation, noncitation) for entire text """
@@ -120,7 +125,8 @@ def thread_get_content( queue_in, queue_out ):
             text, rev_id = get_content(title)
             all_words = cat_words_text(text)
             all_words.sort()
-            queue_out.put((reduce_words(all_words), rev_id))
+            num_sentences = len(tokenize_text(text))
+            queue_out.put((reduce_words(all_words), rev_id, num_sentences))
         except:
             print "Disambiguation Error with %s" % title
             #queue_out.put(('error', 1))
@@ -130,6 +136,7 @@ def aggregate_words(titles, number_threads):
     """ returns reduced list of (word, cite, noncite) tuples for a list of titles """
     all_words = []
     all_ids = []
+    total_num_sentences = 0
     queue_in = multiprocessing.Queue(len(titles) + number_threads)
     queue_out = multiprocessing.Queue(len(titles))
     threads = []
@@ -146,22 +153,45 @@ def aggregate_words(titles, number_threads):
         threads[i].join()
     while queue_out.qsize() > 0:
         #pdb.set_trace()
-        words, rev_id = queue_out.get()
+        words, rev_id, num_sentences = queue_out.get()
         all_words += words
         all_ids.append(rev_id)
+        total_num_sentences += num_sentences
 
     all_words.sort()
-    return reduce_words(all_words), all_ids
+    return reduce_words(all_words), all_ids, total_num_sentences
 
 def gen_word_file( num_titles, file_name, number_threads ):
+    """ Writes word count results to words/file_name as csv with row format:
+
+        word, (count in cited sentence), (count in uncited sentence)
+
+        Writes page ids and the total number of sentences to words/file_namepid as:
+
+        Number of sentences: (number of sentences)
+        pid1
+        pid2 ...
+
+        Also emails summary: requires environ vars EMAIL_ADDRESS, EMAIL_PASSWORD, TO_EMAIL
+    """
     start_time = time.time()
-    titles = wikipedia.random(num_titles)
-    words, ids = aggregate_words(titles, number_threads)
+    titles = []
+    for n in range(num_titles/500):
+        titles += wikipedia.random(500)
+    if num_titles % 500:
+        if num_titles % 500 == 1:
+            titles += [wikipedia.random(1)] # doesn't return a list for one title
+        else:
+            titles += wikipedia.random(num_titles % 500)
+
+    # get word counts
+    words, ids, tot_num_sentences = aggregate_words(titles, number_threads)
     wordfile = open('words/' + file_name, 'w')
     for (word, cite, noncite) in words:
         wordfile.write("%s %s %s\n" % (word, str(cite), str(noncite)))
     wordfile.close()
     idfile = open('words/' + file_name + 'pid', 'w')
+    idfile.write("Number of sentences: %d\n" % tot_num_sentences)
     for rev_id in ids:
         idfile.write("%s\n" % str(rev_id))
     idfile.close()
